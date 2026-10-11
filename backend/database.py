@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-# Load environment variables from the project's .env file
+# Load environment variables from env file
 load_dotenv("../.env")
 
 # Build the connection URL safely, including passwords with special characters

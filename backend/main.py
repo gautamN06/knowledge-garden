@@ -154,15 +154,50 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
 
     matching_entries = query.order_by(KnowledgeEntry.id).all()
 
-    relevant_entries = []
+    scored_entries = []
 
     for entry in matching_entries:
-        searchable_text = (
-            f"{entry.title} {entry.category} {entry.notes}"
-        ).lower()
+        title = entry.title.lower()
+        category = entry.category.lower()
+        notes = entry.notes.lower()
 
-        if any(word in searchable_text for word in words if len(word) > 2):
-            relevant_entries.append(entry)
+        score = 0 
+
+        for word in words:
+            if len(word) <= 2:
+                continue 
+
+            if word in title: 
+                score += 3 
+
+            if word in category:
+                score += 2
+
+            if word in notes:
+                score += 1 
+
+            words = set(request.message.lower().split())
+
+            stop_words = {
+                "what", "did", "does", "do", "how", "why", 
+                "is", "are", "was", "were", "the", "a", "an", 
+                "about", "or", "to", "of", "in", "on", "for", 
+                "with", "that", "this", "it"
+            }
+
+            words = {
+                word for word in words 
+                if len(words) > 2 and word not in stop_words 
+            }
+
+        if score > 0:
+            scored_entries.append((score, entry))
+
+    scored_entries.sort(reverse=True, key=lambda item: item[0])
+
+    relevant_entries = [
+        entry for score, entry in scored_entries[:10]
+    ]
 
     # Build context from the matching entries.
     context = "\n\n".join(
