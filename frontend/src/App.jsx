@@ -1,26 +1,53 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 
+const STORAGE_KEY = 'knowledge-garden-entries'
+
+function getSavedEntries() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
+  } catch {
+    return []
+  }
+}
+
+function saveEntries(entries) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries))
+}
+
+function filterEntries(entries, search, category) {
+  const query = search.trim().toLowerCase()
+
+  return entries.filter((entry) => {
+    const matchesSearch =
+      !query ||
+      entry.title.toLowerCase().includes(query) ||
+      entry.notes.toLowerCase().includes(query)
+
+    const matchesCategory = !category || entry.category === category
+
+    return matchesSearch && matchesCategory
+  })
+}
+
 function App() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('')
-
   const [activePage, setActivePage] = useState('garden')
 
-  const [chatInput, setChatInput] = useState('garden')
+  const [chatInput, setChatInput] = useState('')
   const [chatMessages, setChatMessages] = useState([
     {
-      role: 'assitant',
-      content: 'Hey! Ask me about anything about your knowledge!',
+      role: 'assistant',
+      content: 'Hey! Ask me about anything in your knowledge garden!',
       usedEntries: [],
     },
   ])
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState('')
-
 
   const [showForm, setShowForm] = useState(false)
   const [newTitle, setNewTitle] = useState('')
@@ -39,187 +66,68 @@ function App() {
   const [openMenuId, setOpenMenuId] = useState(null)
 
   useEffect(() => {
-    async function fetchEntries() {
-      try {
-        setLoading(true)
-        setError('')
-
-        const params = new URLSearchParams()
-
-        if (search.trim()) {
-          params.append('search', search.trim())
-        }
-
-        if (category) {
-          params.append('category', category)
-        }
-
-        const response = await fetch(
-          `http://127.0.0.1:8000/entries?${params.toString()}`
-        )
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch entries')
-        }
-
-        const data = await response.json()
-        setEntries(data)
-      } catch (err) {
-        setError(err.message)
-      } finally {
-        setLoading(false)
-      }
+    try {
+      setLoading(true)
+      setError('')
+      setEntries(filterEntries(getSavedEntries(), search, category))
+    } catch {
+      setError('Could not load your saved entries.')
+    } finally {
+      setLoading(false)
     }
-
-    fetchEntries()
   }, [search, category])
 
-
-  async function handleSendMessage(event) {
+  function handleAddEntry(event) {
     event.preventDefault()
-
-    const message = chatInput.trim()
-    
-    if(!message || chatLoading) {
-      return
-    }
-
-    setChatMessages((currentMessages) => [
-      ...currentMessages,
-      {
-        role: 'user',
-        content: message, 
-        usedEntries: [],
-      },
-    ])
-
-    setChatInput('')
-    setChatError('')
-    setChatLoading(true)
-
-    try {
-      const response = await fetch('http://127.0.0.1:8000/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message,
-          history: chatMessages
-            .slice(-8)
-            .map(({ role, content }) => ({ role, content }))
-          }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to get a response from the AI')
-      }
-
-      const data = await response.json()
-
-      setChatMessages((currentMessages) => [
-        ...currentMessages, 
-        {
-          role: 'assistant',
-          content: data.reply, 
-          usedEntries: data.used_entries ?? [],
-        },
-      ])
-  } catch (err) {
-    setChatError(err.message)
-  }finally {
-    setChatLoading(false)
-  }
-}
-
-  async function handleAddEntry(event){
-    event.preventDefault()
-
     setSaving(true)
-    setFormError("")
-    
-    try {
-      const response = await fetch("http://127.0.0.1:8000/entries", {
-        method: 'POST',
-        headers: {
-          'Content-Type':'application/json',
-        },
-        body: JSON.stringify({
-          title: newTitle, 
-          category: newCategory,
-          notes: newNotes,
-        }),
-      })
+    setFormError('')
 
-      if (!response.ok) {
-        throw new Error('Failed to save entry')
+    try {
+      const savedEntries = getSavedEntries()
+
+      const newEntry = {
+        id: Date.now(),
+        title: newTitle.trim(),
+        category: newCategory,
+        notes: newNotes.trim(),
       }
+
+      const updatedEntries = [...savedEntries, newEntry]
+      saveEntries(updatedEntries)
+      setEntries(filterEntries(updatedEntries, search, category))
 
       setNewTitle('')
       setNewCategory('Book')
       setNewNotes('')
       setShowForm(false)
-
-      const params = new URLSearchParams()
-
-      if (search.trim()) {
-        params.append('search', search.trim())
-      }
-
-      if (category) {
-        params.append('category', category)
-      }
-
-      const entriesResponse = await fetch(
-        `http://127.0.0.1:8000/entries?${params.toString()}`
-      )
-
-      if (!entriesResponse.ok) {
-        throw new Error('Entry saved, but refreshing the garden failed')
-      }
-
-      const data = await entriesResponse.json()
-      setEntries(data)
-
-    }catch(err){
-      setFormError(err.message)
+    } catch {
+      setFormError('Could not save entry. Please try again.')
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleDeleteEntry(entryId){
+  function handleDeleteEntry(entryId) {
     const confirmed = window.confirm(
-      "Are you sure you want to delete this entry?"
-    );
+      'Are you sure you want to delete this entry?'
+    )
 
-    if (!confirmed) {
-      return; 
-    }
+    if (!confirmed) return
 
-    try { 
-      const response = await fetch(
-        `http://127.0.0.1:8000/entries/${entryId}`,
-        {
-          method: "DELETE",
-        }
-      );
+    try {
+      const savedEntries = getSavedEntries()
+      const updatedEntries = savedEntries.filter(
+        (entry) => entry.id !== entryId
+      )
 
-      if (!response.ok) {
-        throw new Error("Failed to delete entry");
-      }
-
-      setEntries((currentEntries) => 
-      currentEntries.filter((entry) => entry.id !== entryId)
-    );
-    } catch (error) {
-      console.error("Erorr deleting entry:", error);
-      alert("Couldn't delete this entry. Please try again.");
+      saveEntries(updatedEntries)
+      setEntries(filterEntries(updatedEntries, search, category))
+    } catch {
+      alert('Could not delete entry. Please try again.')
     }
   }
 
-
-  function startEditing(entry){
+  function startEditing(entry) {
     setEditingEntry(entry)
     setEditTitle(entry.title)
     setEditCategory(entry.category)
@@ -235,418 +143,443 @@ function App() {
     setEditError('')
   }
 
-  
-async function handleSaveEdit(event) {
-  event.preventDefault()
-  setSavingEdit(true)
-  setEditError('')
+  function handleSaveEdit(event) {
+    event.preventDefault()
+    setSavingEdit(true)
+    setEditError('')
 
-  try {
-    const response = await fetch(
-      `http://127.0.0.1:8000/entries/${editingEntry.id}`,
-      {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title: editTitle,
-          category: editCategory,
-          notes: editNotes,
-        }),
-      }
-    )
+    try {
+      const savedEntries = getSavedEntries()
 
-    if (!response.ok) {
-      throw new Error('Failed to update entry')
-    }
-
-    const updatedEntry = await response.json()
-
-    setEntries((currentEntries) =>
-      currentEntries.map((entry) =>
-        entry.id === updatedEntry.id ? updatedEntry : entry
+      const updatedEntries = savedEntries.map((entry) =>
+        entry.id === editingEntry.id
+          ? {
+              ...entry,
+              title: editTitle.trim(),
+              category: editCategory,
+              notes: editNotes.trim(),
+            }
+          : entry
       )
-    )
 
-    cancelEditing()
-  } catch (error) {
-    console.error('Error updating entry:', error)
-    setEditError('Could not save changes. Please try again.')
-  } finally {
-    setSavingEdit(false)
+      saveEntries(updatedEntries)
+      setEntries(filterEntries(updatedEntries, search, category))
+      cancelEditing()
+    } catch {
+      setEditError('Could not save changes. Please try again.')
+    } finally {
+      setSavingEdit(false)
+    }
   }
-}
 
+  async function handleSendMessage(event) {
+    event.preventDefault()
+
+    const message = chatInput.trim()
+    if (!message || chatLoading) return
+
+    const history = chatMessages
+      .filter((item) => item.role === 'user' || item.role === 'assistant')
+      .slice(-8)
+      .map(({ role, content }) => ({ role, content }))
+
+    const savedEntries = getSavedEntries()
+    const queryWords = message.toLowerCase().split(/\W+/).filter(Boolean)
+
+    const relevantEntries = savedEntries
+      .map((entry) => {
+        const text = `${entry.title} ${entry.category} ${entry.notes}`.toLowerCase()
+        const score = queryWords.reduce(
+          (total, word) => total + (text.includes(word) ? 1 : 0),
+          0
+        )
+        return { entry, score }
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map((item) => item.entry)
+
+    setChatMessages((current) => [
+      ...current,
+      { role: 'user', content: message, usedEntries: [] },
+    ])
+    setChatInput('')
+    setChatError('')
+    setChatLoading(true)
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          history,
+          entries: relevantEntries,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(
+          response.status === 404
+            ? 'The chat API is not set up yet. Your saved entries still work.'
+            : 'Could not get a response from the AI. Check your API setup.'
+        )
+      }
+
+      const data = await response.json()
+
+      setChatMessages((current) => [
+        ...current,
+        {
+          role: 'assistant',
+          content: data.reply,
+          usedEntries: data.used_entries ?? relevantEntries,
+        },
+      ])
+    } catch (err) {
+      setChatError(err.message || 'Something went wrong.')
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
+  const categories = [
+    'Book',
+    'Person',
+    'Movie',
+    'Show',
+    'Game',
+    'Idea',
+    'Other',
+  ]
 
   return (
-    <div className="app-layout">
+    <div className="app">
       <aside className="sidebar">
-        <h2 className="logo">🌱 Knowledge Garden</h2>
+        <div className="logo">
+          <span className="logo-icon">🌱</span>
+          <span>Knowledge Garden</span>
+        </div>
 
-        <nav>
-          <p className="nav-heading">YOUR GARDEN</p>
-          <a
-            className={`nav-link ${activePage === 'chat' ? 'active' : ''}`}
-            href="#chat"
-            onClick={(event) => {
-              event.preventDefault()
-              setActivePage('chat')
-              setCategory('')
-            }}
+        <nav className="sidebar-nav">
+          <button
+            className={activePage === 'garden' ? 'nav-item active' : 'nav-item'}
+            onClick={() => setActivePage('garden')}
           >
-           ✨ AI Assitant 
-          </a>
-          <a
-            className={`nav-link ${
-              activePage === 'garden' && category === '' ? 'active' : ''
-            }`}
-            href="#all"
-            onClick={(event) => {
-              event.preventDefault()
-              setActivePage('garden')
-              setCategory('')
-            }}
+            <span>🌿</span> My Garden
+          </button>
+          <button
+            className={activePage === 'chat' ? 'nav-item active' : 'nav-item'}
+            onClick={() => setActivePage('chat')}
           >
-            All entries
-          </a>
-
-          <a
-            className={`nav-link ${category === 'Historical Figure' ? 'active' : ''}`}
-            href="#people"
-            onClick={(event) => {
-              event.preventDefault()
-              setActivePage('garden')
-              setCategory('Historical Figure')
-            }}
-          >
-            People
-          </a>
-
-          <a
-            className={`nav-link ${category === 'Book' ? 'active' : ''}`}
-            href="#books"
-            onClick={(event) => {
-              event.preventDefault()
-              setActivePage('garden')
-              setCategory('Book')
-            }}
-          >
-           Books
-          </a>
-
-          <a
-            className={`nav-link ${category === 'Movie' ? 'active' : ''}`}
-            href="#movies"
-            onClick={(event) => {
-              event.preventDefault()
-              setActivePage('garden')
-              setCategory('Movie')
-            }}
-          >
-            Movies
-          </a>
-
-          <a
-            className={`nav-link ${category === 'Idea' ? 'active' : ''}`}
-              href="#ideas"
-              onClick={(event) => {
-              event.preventDefault()
-              setActivePage('garden')
-              setCategory('Idea')
-            }}
-          >
-            Ideas
-          </a>
+            <span>💬</span> Ask Your Garden
+          </button>
         </nav>
 
-        <div className="sidebar-footer">
-          Grow your knowledge, one connection at a time.
+        <div className="sidebar-bottom">
+          <p>Your personal space for ideas, knowledge, and connections.</p>
         </div>
       </aside>
 
       <main className="main-content">
-        <header className="topbar">
-          <span>My personal space</span>
-          <span className="avatar">G</span>
-        </header>
-        
-        {activePage === 'garden' && (
+        {activePage === 'garden' ? (
           <>
-        <section className="welcome">
-          <p className="eyebrow">YOUR SECOND BRAIN</p>
-          <h1>Your garden of knowledge.</h1>
-          <p className="subtitle">
-            Collect the people, stories, and ideas that shape how you see the world.
-          </p>
-        </section>
-
-        <section className="toolbar">
-          <input
-            className="search-input"
-            type="text"
-            placeholder="Search your garden..."
-            value={search}
-            onChange={(event)=> setSearch(event.target.value)}
-          />
-          <button 
-          className="add-button"
-          onClick={() => {
-            setFormError('')
-            setShowForm(!showForm)
-          }}
-          >
-           {showForm ? 'Cancel' : '+ Add Entry'}
-          </button>
-        </section>
-
-        {showForm && (
-        <form className="entry-form" onSubmit={handleAddEntry}>
-          <h2>Plant a new entry 🌱</h2>
-
-          <label htmlFor="entry-title">Title</label>
-          <input
-            id="entry-title"
-            value={newTitle}
-            onChange={(event) => setNewTitle(event.target.value)}
-            placeholder="e.g. Siddhartha"
-            required
-          />
-
-          <label htmlFor="entry-category">Category</label>
-          <select
-            id="entry-category"
-            value={newCategory}
-            onChange={(event) => setNewCategory(event.target.value)}
-          >
-            <option value="Historical Figure">Historical Figure</option>
-            <option value="Book">Book</option>
-            <option value="Movie">Movie</option>
-            <option value="Idea">Idea</option>
-          </select>
-
-          <label htmlFor="entry-notes">Notes</label>
-          <textarea
-            id="entry-notes"
-            value={newNotes}
-            onChange={(event) => setNewNotes(event.target.value)}
-            placeholder="What do you want to remember about this?"
-            rows={4}
-            required
-          />
-
-          {formError && <p className="form-error">{formError}</p>}
-
-          <button className="add-button" type="submit" disabled={saving}>
-            {saving ? 'Saving...' : 'Save entry'}
-          </button>
-        </form>
-      )}
-
-
-        <section className="entries-section" id="all">
-          <div className="section-header">
-            <h2>Growing collection</h2>
-            <span>{entries.length} entries</span>
-          </div>
-
-          {loading && <p>Growing your garden...</p>}
-
-          {error && <p>Couldn't load entries: {error}</p>}
-
-          {!loading && !error && entries.length === 0 && (
-            <p>Your garden is empty. Add your first entry soon!</p>
-          )}
-
-
-<div className="entries-grid">
-  {entries.map((entry) => (
-    <article className="entry-card" key={entry.id}>
-      <div className="entry-card-header">
-        <span className="category">{entry.category}</span>
-
-        <div className="entry-menu-container">
-          <button
-            className="menu-button"
-            onClick={() =>
-              setOpenMenuId(
-                openMenuId === entry.id ? null : entry.id
-              )
-            }
-            aria-label="Entry options"
-          >
-            ⋮
-          </button>
-
-          {openMenuId === entry.id && (
-            <div className="entry-menu">
-              <button
-                onClick={() => {
-                  startEditing(entry)
-                  setOpenMenuId(null)
-                }}
-              >
-                Edit entry
-              </button>
-
-              <button
-                className="menu-delete-button"
-                onClick={() => {
-                  setOpenMenuId(null)
-                  handleDeleteEntry(entry.id)
-                }}
-              >
-                Delete entry
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <h3>{entry.title}</h3>
-      <p>{entry.notes}</p>
-      <span className="card-footer">Explore entry ↗</span>
-
-      {editingEntry?.id === entry.id && (
-        <form className="entry-form" onSubmit={handleSaveEdit}>
-          <label htmlFor={`edit-title-${entry.id}`}>Title</label>
-          <input
-            id={`edit-title-${entry.id}`}
-            value={editTitle}
-            onChange={(event) => setEditTitle(event.target.value)}
-            required
-          />
-
-          <label htmlFor={`edit-category-${entry.id}`}>Category</label>
-          <select
-            id={`edit-category-${entry.id}`}
-            value={editCategory}
-            onChange={(event) => setEditCategory(event.target.value)}
-            required
-          >
-            <option value="Person">Person</option>
-            <option value="Historical Figure">Historical Figure</option>
-            <option value="Book">Book</option>
-            <option value="Movie">Movie</option>
-            <option value="Idea">Idea</option>
-          </select>
-
-          <label htmlFor={`edit-notes-${entry.id}`}>Notes</label>
-          <textarea
-            id={`edit-notes-${entry.id}`}
-            value={editNotes}
-            onChange={(event) => setEditNotes(event.target.value)}
-            rows={4}
-            required
-          />
-
-          {editError && <p className="form-error">{editError}</p>}
-
-          <button type="submit" disabled={savingEdit}>
-            {savingEdit ? "Saving..." : "Save changes"}
-          </button>
-
-          <button type="button" onClick={cancelEditing}>
-            Cancel
-          </button>
-        </form>
-      )}
-    </article>
-  ))}
-</div>
-
-        </section>
-      </>
-        )}
-      
-{activePage === 'chat' && (
-  <section className="chat-page">
-    <header className="chat-heading">
-      <p className="eyebrow">YOUR PERSONAL AI</p>
-      <h1>Knowledge Assistant</h1>
-      <p className="subtitle">
-        Explore your saved knowledge, ask questions,
-        and discover connections between your interests.
-      </p>
-    </header>
-
-    <div className="chat-messages">
-      {chatMessages.map((message, index) => (
-        <div
-          className={`chat-message ${
-            message.role === 'user'
-              ? 'user-message'
-              : 'assistant-message'
-          }`}
-          key={index}
-        >
-          <span className="message-role">
-            {message.role === 'user' ? 'You' : 'Knowledge Garden AI'}
-          </span>
-
-          <p>{message.content}</p>
-
-          {message.usedEntries?.length > 0 && (
-            <div className="used-entries">
-              <span className="used-entries-label">
-                Based on your saved entries
-              </span>
-
-              <div className="used-entry-list">
-                {message.usedEntries.map((entry) => (
-                  <span className="used-entry-chip" key={entry.id}>
-                    {entry.title}
-                  </span>
-                ))}
+            <header className="page-header">
+              <div>
+                <p className="eyebrow">YOUR PERSONAL KNOWLEDGE BASE</p>
+                <h1>My Garden</h1>
+                <p className="page-subtitle">
+                  Collect the things you learn and love.
+                </p>
               </div>
+
+              <button
+                className="primary-button"
+                onClick={() => {
+                  setShowForm(!showForm)
+                  setFormError('')
+                }}
+              >
+                {showForm ? 'Cancel' : '+ Add Entry'}
+              </button>
+            </header>
+
+            {showForm && (
+              <form className="entry-form" onSubmit={handleAddEntry}>
+                <h2>Plant a new idea</h2>
+
+                <label htmlFor="new-title">Title</label>
+                <input
+                  id="new-title"
+                  value={newTitle}
+                  onChange={(event) => setNewTitle(event.target.value)}
+                  placeholder="e.g. 1984, Ali ibn Abu Talib"
+                  required
+                />
+
+                <label htmlFor="new-category">Category</label>
+                <select
+                  id="new-category"
+                  value={newCategory}
+                  onChange={(event) => setNewCategory(event.target.value)}
+                >
+                  {categories.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+
+                <label htmlFor="new-notes">Notes</label>
+                <textarea
+                  id="new-notes"
+                  value={newNotes}
+                  onChange={(event) => setNewNotes(event.target.value)}
+                  placeholder="What do you want to remember about this?"
+                  rows={4}
+                  required
+                />
+
+                {formError && <p className="error-message">{formError}</p>}
+
+                <button className="primary-button" disabled={saving}>
+                  {saving ? 'Saving...' : 'Save Entry'}
+                </button>
+              </form>
+            )}
+
+            <div className="toolbar">
+              <input
+                className="search-input"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search your garden..."
+                aria-label="Search entries"
+              />
+
+              <select
+                className="category-filter"
+                value={category}
+                onChange={(event) => setCategory(event.target.value)}
+                aria-label="Filter by category"
+              >
+                <option value="">All categories</option>
+                {categories.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
-        </div>
-      ))}
 
-      {chatLoading && (
-        <div className="chat-message assistant-message">
-          <span className="message-role">Knowledge Garden AI</span>
-          <p>Thinking about your garden...</p>
-        </div>
-      )}
+            {error && <p className="error-message">{error}</p>}
 
-      <div />
-    </div>
+            {loading ? (
+              <p className="empty-state">Loading your garden...</p>
+            ) : entries.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">🌱</div>
+                <h2>Your garden is waiting to grow</h2>
+                <p>
+                  Add your first entry, or try a different search.
+                </p>
+                {!showForm && (
+                  <button
+                    className="primary-button"
+                    onClick={() => setShowForm(true)}
+                  >
+                    + Add Your First Entry
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                <p className="entry-count">
+                  {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
+                </p>
 
-    {chatError && (
-      <p className="form-error">{chatError}</p>
-    )}
+                <div className="entries-grid">
+                  {entries.map((entry) => (
+                    <article className="entry-card" key={entry.id}>
+                      {editingEntry?.id === entry.id ? (
+                        <form
+                          className="edit-form"
+                          onSubmit={handleSaveEdit}
+                        >
+                          <label>Title</label>
+                          <input
+                            value={editTitle}
+                            onChange={(event) =>
+                              setEditTitle(event.target.value)
+                            }
+                            required
+                          />
 
-    <form className="chat-input-form" onSubmit={handleSendMessage}>
-      <textarea
-        className="chat-input"
-        value={chatInput}
-        onChange={(event) => setChatInput(event.target.value)}
-        placeholder="Ask about your saved knowledge..."
-        rows={2}
-        disabled={chatLoading}
-      />
+                          <label>Category</label>
+                          <select
+                            value={editCategory}
+                            onChange={(event) =>
+                              setEditCategory(event.target.value)
+                            }
+                          >
+                            {categories.map((item) => (
+                              <option key={item} value={item}>
+                                {item}
+                              </option>
+                            ))}
+                          </select>
 
-      <button
-        className="add-button chat-send-button"
-        type="submit"
-        disabled={chatLoading || !chatInput.trim()}
-      >
-        {chatLoading ? 'Thinking...' : 'Send ↑'}
-      </button>
-    </form>
+                          <label>Notes</label>
+                          <textarea
+                            value={editNotes}
+                            onChange={(event) =>
+                              setEditNotes(event.target.value)
+                            }
+                            rows={4}
+                            required
+                          />
 
-    <p className="chat-disclaimer">
-      Answers may include general knowledge as well as your saved notes.
-    </p>
-  </section>
-)}
+                          {editError && (
+                            <p className="error-message">{editError}</p>
+                          )}
 
+                          <div className="card-actions">
+                            <button
+                              className="primary-button"
+                              disabled={savingEdit}
+                            >
+                              {savingEdit ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={cancelEditing}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <div className="entry-card-header">
+                            <span className="category-tag">
+                              {entry.category}
+                            </span>
+                            <button
+                              className="menu-button"
+                              aria-label={`Options for ${entry.title}`}
+                              onClick={() =>
+                                setOpenMenuId(
+                                  openMenuId === entry.id ? null : entry.id
+                                )
+                              }
+                            >
+                              ⋯
+                            </button>
+                            {openMenuId === entry.id && (
+                              <div className="entry-menu">
+                                <button
+                                  onClick={() => {
+                                    startEditing(entry)
+                                    setOpenMenuId(null)
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    handleDeleteEntry(entry.id)
+                                    setOpenMenuId(null)
+                                  }}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          <h2>{entry.title}</h2>
+                          <p className="entry-notes">{entry.notes}</p>
+                        </>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        ) : (
+          <section className="chat-page">
+            <header className="page-header">
+              <div>
+                <p className="eyebrow">YOUR PERSONAL KNOWLEDGE ASSISTANT</p>
+                <h1>Ask Your Garden</h1>
+                <p className="page-subtitle">
+                  Ask questions about the knowledge you've saved.
+                </p>
+              </div>
+            </header>
+
+            <div className="chat-panel">
+              <div className="chat-messages">
+                {chatMessages.map((message, index) => (
+                  <div
+                    className={`chat-message ${message.role === 'user' ? 'user-message' : 'assistant-message'}`}
+                    key={`${message.role}-${index}`}
+                  >
+                    <div className="message-role">
+                      {message.role === 'user' ? 'You' : 'Garden Assistant'}
+                    </div>
+                    <p>{message.content}</p>
+
+                    {message.usedEntries?.length > 0 && (
+                      <div className="used-entries">
+                        <span>Based on your entries:</span>
+                        {message.usedEntries.map((entry) => (
+                          <span className="used-entry-tag" key={entry.id}>
+                            {entry.title}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {chatLoading && (
+                  <div className="chat-message assistant-message">
+                    <p>Thinking about your garden...</p>
+                  </div>
+                )}
+              </div>
+
+              {chatError && <p className="error-message">{chatError}</p>}
+
+              <form className="chat-form" onSubmit={handleSendMessage}>
+                <input
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  placeholder="Ask about something you've saved..."
+                  aria-label="Message"
+                  disabled={chatLoading}
+                />
+                <button
+                  className="primary-button"
+                  disabled={chatLoading || !chatInput.trim()}
+                >
+                  {chatLoading ? 'Thinking...' : 'Send'}
+                </button>
+              </form>
+
+              <p className="chat-disclaimer">
+                The assistant uses matching entries from your garden as context.
+              </p>
+            </div>
+          </section>
+        )}
       </main>
     </div>
   )
 }
 
 export default App
-
